@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import copy
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -89,6 +90,12 @@ class Store:
         self._channels: dict[str, DataChannelEvent] = {}
         # 失败恢复记录：recovery_id → FailureRecovery
         self._failures: dict[str, FailureRecovery] = {}
+        # 任务拓扑运行数据：拓扑名称 → 已发布运行版本（节点绑定钉在版本里）
+        self._topology_runs: dict[str, dict[str, Any]] = {}
+        # 降级状态清单：拓扑名称 → 按版本号递增的清单版本列表
+        self._degradation_manifests: dict[str, list[dict[str, Any]]] = {}
+        # 跨模块写入需要原子性：序号14 的异常边界只允许恢复一次
+        self.lock = threading.RLock()
 
     # ---- 跨模块数据通道 ----
 
@@ -183,6 +190,34 @@ class Store:
         )
         self._failures[rid] = recovery
         return recovery
+
+    def register_failure_once(
+        self,
+        module: str,
+        operation: str,
+        error: str,
+        strategy: str = "retry",
+        context: dict[str, Any] | None = None,
+        fingerprint: str | None = None,
+    ) -> FailureRecovery:
+        """按指纹登记失败：同一异常重复发生只保留一条未恢复记录。
+
+        用于防止重试/并发重入把同一个异常记成多条，恢复后也不再重复登记。
+        """
+        import hashlib
+        fp = fingerprint or hashlib.md5(
+            f"{module}|{operation}|{error}".encode()
+        ).hexdigest()[:16]
+        for recovery in self._failures.values():
+            if recovery.context.get("_fingerprint") != fp:
+                continue
+            if recovery.status in ("open", "recovering"):
+                return recovery
+            if recovery.status == "recovered":
+                return recovery
+        merged_context = dict(context or {})
+        merged_context["_fingerprint"] = fp
+        return self.register_failure(module, operation, error, strategy, merged_context)
 
     def get_open_failures(self, module: str | None = None) -> list[FailureRecovery]:
         """获取未恢复的失败记录。"""

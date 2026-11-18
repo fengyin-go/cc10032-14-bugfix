@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import ROUTERS
+from app.routers import FIXED_ROUTERS, ROUTERS
 from app.store import store
 
 app = FastAPI(title="实时计算服务中心", version="2.0.0")
@@ -92,5 +92,9 @@ def list_failures(module: str | None = None) -> dict[str, Any]:
 
 # 资源路由含 /api/{module}，必须放在 health / overview 之后注册，
 # 否则固定路径会被动态路径抢先匹配。
+# 序号14 的固定路径路由（/api/task_topology/{id}/binding、/api/throughput_mgr/degradation）
+# 必须在通用 /api/{module}/{entry_id} 之前注册，否则 "degradation" 会被当成 entry_id。
+for module in FIXED_ROUTERS:
+    app.include_router(module)
 for module in ROUTERS:
     app.include_router(module.router)

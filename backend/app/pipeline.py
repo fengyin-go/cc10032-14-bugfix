@@ -465,12 +465,19 @@ def simulate_task_topology_flow(
         parallel = int(topo.get("并行度", str(parallelism)))
     except (ValueError, TypeError):
         parallel = parallelism
-    # 获取吞吐配置
-    tp_config = None
-    for row in store.rows("throughput_mgr"):
-        if row.get("数据源") == source_name:
-            tp_config = row
-            break
+    # 获取吞吐配置：源端名称按完整标识精确匹配，避免前缀名称串到别的配置。
+    exact = [
+        row for row in store.rows("throughput_mgr")
+        if str(row.get("数据源", "")) == str(source_name)
+    ]
+    if len(exact) > 1:
+        return {
+            "error": (
+                f"源端「{source_name}」命中 {len(exact)} 个吞吐配置，"
+                f"名称歧义，拒绝生成降级状态"
+            )
+        }
+    tp_config = exact[0] if exact else None
     try:
         max_qps = float((tp_config or {}).get("最大QPS", "1000"))
     except (ValueError, TypeError):

@@ -46,7 +46,14 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="row in rows" :key="String(row.id)" :data-testid="`row-${row.id}`" :data-status="String(row.status)">
+        <tr
+          v-for="row in rows"
+          :key="String(row.id)"
+          :data-testid="`row-${row.id}`"
+          :data-status="String(row.status)"
+          :class="{ 'row-selected': selectedId === Number(row.id) }"
+          @click="selectRow(row)"
+        >
           <td v-for="column in meta.fields" :key="column">{{ row[column] ?? '—' }}</td>
           <td>{{ row.status }}</td>
           <td class="row-actions">
@@ -56,9 +63,18 @@
               class="link"
               type="button"
               :data-testid="`action-${row.id}-${action}`"
-              @click="runAction(action, row)"
+              @click.stop="runAction(action, row)"
             >
               {{ action }}
+            </button>
+            <button
+              v-if="meta.key === 'task_topology'"
+              class="link"
+              data-testid="view-binding"
+              type="button"
+              @click.stop="selectRow(row)"
+            >
+              查看节点绑定
             </button>
           </td>
         </tr>
@@ -86,8 +102,18 @@
       </form>
     </div>
 
+    <TopologyBindingPanel
+      v-if="meta.key === 'task_topology'"
+      :module-key="meta.key"
+      :entry-id="selectedId"
+    />
+    <DegradationPanel v-if="meta.key === 'throughput_mgr'" :module-key="meta.key" />
+
     <footer class="page-foot">
       <span>共 {{ total }} 条{{ meta.name }}记录</span>
+      <span v-if="meta.key === 'task_topology' && selectedId !== null" class="page-desc">
+        当前查看：{{ selectedName }} 的节点绑定
+      </span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
   </section>
@@ -104,6 +130,8 @@ import {
   runAction as applyAction,
 } from '@/api/backend-service'
 import type { EntryRow } from '@/data/types'
+import TopologyBindingPanel from '@/views/TopologyBindingPanel.vue'
+import DegradationPanel from '@/views/DegradationPanel.vue'
 
 const props = defineProps<{ moduleKey: string }>()
 const meta = moduleMeta(props.moduleKey)
@@ -115,6 +143,16 @@ const filterFields = meta.fields.slice(0, 3)
 const showCreate = ref(false)
 const creating = ref(false)
 const createValues = ref<Record<string, string>>({})
+const selectedId = ref<number | null>(null)
+const selectedName = computed(() => {
+  const row = rows.value.find((item) => Number(item.id) === selectedId.value)
+  return row ? String(row[meta.fields[0]] ?? `#${selectedId.value}`) : '—'
+})
+
+function selectRow(row: EntryRow) {
+  selectedId.value = Number(row.id)
+}
+
 const stats = computed(() => [
   { label: meta.metrics[0], value: total.value },
   { label: meta.metrics[1], value: rows.value.filter((row) => row.status === meta.statuses[1]).length },
@@ -182,6 +220,9 @@ async function reload() {
     const payload = await listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    if (meta.key === 'task_topology' && selectedId.value === null && rows.value.length) {
+      selectedId.value = Number(rows.value[0].id)
+    }
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '业务列表读取失败'
   }
